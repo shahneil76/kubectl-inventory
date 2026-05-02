@@ -22,8 +22,11 @@ builds:
       - arm64
 
 archives:
-  - formats: [tar.gz]
-    # Krew requires the LICENSE file to be present in the archive.
+  - # GoReleaser uses bare version (no 'v') in archive filenames by default.
+    # e.g. kubectl-inventory_0.1.0_darwin_arm64.tar.gz (NOT _v0.1.0_)
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    # krew requires the LICENSE file to be present in the archive.
     files:
       - LICENSE
     format_overrides:

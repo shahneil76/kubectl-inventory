@@ -90,22 +90,24 @@ kubectl krew install inventory
 Grab the binary for your platform from [Releases](https://github.com/shahneil76/kubectl-inventory/releases) and place it anywhere in your `$PATH`.
 
 ```bash
-VERSION=v0.1.0
+# GoReleaser strips the 'v' prefix from the archive filename
+TAG=v0.1.0
+VER=0.1.0
 
 # macOS arm64 (Apple Silicon)
-curl -sL "https://github.com/shahneil76/kubectl-inventory/releases/download/${VERSION}/kubectl-inventory_${VERSION}_darwin_arm64.tar.gz" \
+curl -sL "https://github.com/shahneil76/kubectl-inventory/releases/download/${TAG}/kubectl-inventory_${VER}_darwin_arm64.tar.gz" \
   | tar -xz && mv kubectl-inventory /usr/local/bin/
 
 # macOS amd64 (Intel)
-curl -sL "https://github.com/shahneil76/kubectl-inventory/releases/download/${VERSION}/kubectl-inventory_${VERSION}_darwin_amd64.tar.gz" \
+curl -sL "https://github.com/shahneil76/kubectl-inventory/releases/download/${TAG}/kubectl-inventory_${VER}_darwin_amd64.tar.gz" \
   | tar -xz && mv kubectl-inventory /usr/local/bin/
 
 # Linux amd64
-curl -sL "https://github.com/shahneil76/kubectl-inventory/releases/download/${VERSION}/kubectl-inventory_${VERSION}_linux_amd64.tar.gz" \
+curl -sL "https://github.com/shahneil76/kubectl-inventory/releases/download/${TAG}/kubectl-inventory_${VER}_linux_amd64.tar.gz" \
   | tar -xz && mv kubectl-inventory /usr/local/bin/
 
 # Linux arm64
-curl -sL "https://github.com/shahneil76/kubectl-inventory/releases/download/${VERSION}/kubectl-inventory_${VERSION}_linux_arm64.tar.gz" \
+curl -sL "https://github.com/shahneil76/kubectl-inventory/releases/download/${TAG}/kubectl-inventory_${VER}_linux_arm64.tar.gz" \
   | tar -xz && mv kubectl-inventory /usr/local/bin/
 ```
 
