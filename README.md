@@ -76,6 +76,13 @@ Duration:         7.8s
 
 ## Installation
 
+### Via Homebrew
+
+```bash
+brew tap shahneil76/kubectl-inventory
+brew install kubectl-inventory
+```
+
 ### Via krew
 
 ```bash
