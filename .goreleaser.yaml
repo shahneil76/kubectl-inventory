@@ -1,0 +1,39 @@
+version: 2
+
+project_name: kubectl-inventory
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: ./main.go
+    binary: kubectl-inventory
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - formats: [tar.gz]
+    # Krew requires the LICENSE file to be present in the archive.
+    files:
+      - LICENSE
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  github:
+    owner: shahneil76
+    name: kubectl-inventory

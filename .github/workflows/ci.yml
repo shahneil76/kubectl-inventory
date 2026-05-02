@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build & Vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Tidy
+        run: go mod tidy && git diff --exit-code go.sum
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build (all platforms)
+        run: |
+          GOOS=linux   GOARCH=amd64 go build -o /dev/null ./main.go
+          GOOS=linux   GOARCH=arm64 go build -o /dev/null ./main.go
+          GOOS=darwin  GOARCH=amd64 go build -o /dev/null ./main.go
+          GOOS=darwin  GOARCH=arm64 go build -o /dev/null ./main.go
+          GOOS=windows GOARCH=amd64 go build -o /dev/null ./main.go
+
+      - name: Test
+        run: go test ./...

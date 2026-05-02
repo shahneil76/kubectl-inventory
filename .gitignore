@@ -1,0 +1,28 @@
+# Binaries
+bin/
+dist/
+
+# Test artifacts
+*.test
+*.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+__MACOSX/
+
+# Go workspace
+go.work
+go.work.sum
+
+# Temp / scratch files
+*.tmp
+scratch/
+
+# GoReleaser
+dist/

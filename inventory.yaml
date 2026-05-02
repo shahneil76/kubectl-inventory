@@ -1,0 +1,113 @@
+apiVersion: krew.googlecontainertools.github.com/v1alpha2
+kind: Plugin
+metadata:
+  # 'name' must match this filename (inventory.yaml) and defines the
+  # kubectl subcommand: kubectl inventory
+  name: inventory
+spec:
+  version: v0.1.0
+  homepage: https://github.com/shahneil76/kubectl-inventory
+  shortDescription: Complete namespace resource inventory and analysis
+  description: |
+    Scans every API resource in a namespace — including all CRDs — and
+    classifies them by ownership, references, GitOps signals, and stuck
+    finalizers.
+
+    Detects suspicious orphan resources, dangling ownerReferences,
+    stuck finalizers, and ArgoCD/Helm/Flux managed objects.
+
+    Uses a metadata-first scan (PartialObjectMetadataList) that is
+    ~10x faster than kubectl get all or ketall on large clusters.
+
+    Usage:
+      kubectl inventory -n my-namespace
+      kubectl inventory explain pod/my-pod -n my-namespace
+      kubectl inventory orphans -n my-namespace
+      kubectl inventory stuck -n my-namespace
+  caveats: |
+    This plugin is read-only: it only calls List/Get against the
+    Kubernetes API. No cluster-side installation required.
+  platforms:
+    # Linux amd64
+    - selector:
+        matchLabels:
+          os: linux
+          arch: amd64
+      uri: https://github.com/shahneil76/kubectl-inventory/releases/download/v0.1.0/kubectl-inventory_v0.1.0_linux_amd64.tar.gz
+      sha256: REPLACE_WITH_SHA256
+      files:
+        - from: kubectl-inventory
+          to: .
+        - from: LICENSE
+          to: .
+      bin: kubectl-inventory
+
+    # Linux arm64
+    - selector:
+        matchLabels:
+          os: linux
+          arch: arm64
+      uri: https://github.com/shahneil76/kubectl-inventory/releases/download/v0.1.0/kubectl-inventory_v0.1.0_linux_arm64.tar.gz
+      sha256: REPLACE_WITH_SHA256
+      files:
+        - from: kubectl-inventory
+          to: .
+        - from: LICENSE
+          to: .
+      bin: kubectl-inventory
+
+    # macOS amd64 (Intel)
+    - selector:
+        matchLabels:
+          os: darwin
+          arch: amd64
+      uri: https://github.com/shahneil76/kubectl-inventory/releases/download/v0.1.0/kubectl-inventory_v0.1.0_darwin_amd64.tar.gz
+      sha256: REPLACE_WITH_SHA256
+      files:
+        - from: kubectl-inventory
+          to: .
+        - from: LICENSE
+          to: .
+      bin: kubectl-inventory
+
+    # macOS arm64 (Apple Silicon)
+    - selector:
+        matchLabels:
+          os: darwin
+          arch: arm64
+      uri: https://github.com/shahneil76/kubectl-inventory/releases/download/v0.1.0/kubectl-inventory_v0.1.0_darwin_arm64.tar.gz
+      sha256: REPLACE_WITH_SHA256
+      files:
+        - from: kubectl-inventory
+          to: .
+        - from: LICENSE
+          to: .
+      bin: kubectl-inventory
+
+    # Windows amd64
+    - selector:
+        matchLabels:
+          os: windows
+          arch: amd64
+      uri: https://github.com/shahneil76/kubectl-inventory/releases/download/v0.1.0/kubectl-inventory_v0.1.0_windows_amd64.zip
+      sha256: REPLACE_WITH_SHA256
+      files:
+        - from: kubectl-inventory.exe
+          to: .
+        - from: LICENSE
+          to: .
+      bin: kubectl-inventory.exe
+
+    # Windows arm64
+    - selector:
+        matchLabels:
+          os: windows
+          arch: arm64
+      uri: https://github.com/shahneil76/kubectl-inventory/releases/download/v0.1.0/kubectl-inventory_v0.1.0_windows_arm64.zip
+      sha256: REPLACE_WITH_SHA256
+      files:
+        - from: kubectl-inventory.exe
+          to: .
+        - from: LICENSE
+          to: .
+      bin: kubectl-inventory.exe

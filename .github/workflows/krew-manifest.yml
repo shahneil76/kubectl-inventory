@@ -1,0 +1,81 @@
+name: Update Krew Manifest
+
+# Runs after the Release workflow has completed and binaries are published.
+# Updates inventory.yaml with real SHA256 checksums from the release.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  update-manifest:
+    name: Patch inventory.yaml SHA256s
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get release version
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Download checksums
+        run: |
+          curl -sL "https://github.com/shahneil76/kubectl-inventory/releases/download/${{ steps.version.outputs.VERSION }}/checksums.txt" \
+            -o checksums.txt
+          cat checksums.txt
+
+      - name: Patch inventory.yaml
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+
+          patch_sha() {
+            local archive="$1"
+            local sha=$(grep "$archive" checksums.txt | awk '{print $1}')
+            echo "Patching $archive -> $sha"
+            # Update version in URI and sha256 for this archive
+            sed -i "s|kubectl-inventory_v[0-9.]*_${archive}|kubectl-inventory_${VERSION}_${archive}|g" inventory.yaml
+            # Replace REPLACE_WITH_SHA256 sequentially (one per platform)
+            python3 - <<EOF
+          import re, sys
+
+          with open('inventory.yaml', 'r') as f:
+              content = f.read()
+
+          # Find the platform block for this archive and replace its sha256
+          archive = '${archive}'
+          sha = '${sha}'
+
+          # Replace only the FIRST remaining REPLACE_WITH_SHA256
+          content = content.replace('REPLACE_WITH_SHA256', sha, 1)
+
+          with open('inventory.yaml', 'w') as f:
+              f.write(content)
+          EOF
+          }
+
+          patch_sha "linux_amd64.tar.gz"
+          patch_sha "linux_arm64.tar.gz"
+          patch_sha "darwin_amd64.tar.gz"
+          patch_sha "darwin_arm64.tar.gz"
+          patch_sha "windows_amd64.zip"
+          patch_sha "windows_arm64.zip"
+
+          # Update version field
+          sed -i "s|version: v[0-9.]*|version: ${VERSION}|g" inventory.yaml
+
+          echo "=== Updated inventory.yaml ==="
+          cat inventory.yaml
+
+      - name: Commit updated manifest
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add inventory.yaml
+          git diff --staged --quiet && echo "No changes" || \
+            git commit -m "chore: update krew manifest to ${{ steps.version.outputs.VERSION }}" && \
+            git push
