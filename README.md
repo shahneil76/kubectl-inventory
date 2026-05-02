@@ -5,7 +5,7 @@
 [![CI](https://github.com/shahneil76/kubectl-inventory/actions/workflows/ci.yml/badge.svg)](https://github.com/shahneil76/kubectl-inventory/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/shahneil76/kubectl-inventory)](https://goreportcard.com/report/github.com/shahneil76/kubectl-inventory)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Ko-fi](https://img.shields.io/badge/Ko--fi-support-%23FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/xshahneil)
+
 
 A complete Kubernetes namespace inventory tool. Scans every API resource — including all CRDs — and classifies them by ownership, references, GitOps signals, and stuck finalizers.
 
@@ -302,3 +302,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). PRs welcome.
 ## License
 
 [MIT](LICENSE)
+
+## Support
+
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-support-%23FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/xshahneil)
+
