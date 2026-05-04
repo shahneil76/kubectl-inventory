@@ -26,3 +26,7 @@ scratch/
 
 # GoReleaser
 dist/
+
+# Web UI design source files (not part of the build)
+Web-UI/
+Images/
