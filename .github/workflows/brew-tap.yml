@@ -1,0 +1,104 @@
+name: Update Homebrew Tap
+
+# Fires after GoReleaser publishes a release.
+on:
+  release:
+    types: [published]
+
+jobs:
+  update-tap:
+    name: Bump Formula in homebrew-kubectl-inventory
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get release version
+        id: version
+        run: |
+          # Strip the 'v' prefix for filenames (GoReleaser does this too)
+          TAG="${GITHUB_REF_NAME}"
+          VER="${TAG#v}"
+          echo "TAG=$TAG" >> $GITHUB_OUTPUT
+          echo "VER=$VER" >> $GITHUB_OUTPUT
+
+      - name: Download checksums
+        run: |
+          curl -sL "https://github.com/shahneil76/kubectl-inventory/releases/download/${{ steps.version.outputs.TAG }}/checksums.txt" \
+            -o checksums.txt
+          cat checksums.txt
+
+      - name: Extract SHA256s
+        id: sha
+        run: |
+          get_sha() { grep "$1" checksums.txt | awk '{print $1}'; }
+          echo "darwin_arm64=$(get_sha 'darwin_arm64.tar.gz')"  >> $GITHUB_OUTPUT
+          echo "darwin_amd64=$(get_sha 'darwin_amd64.tar.gz')"  >> $GITHUB_OUTPUT
+          echo "linux_arm64=$(get_sha 'linux_arm64.tar.gz')"    >> $GITHUB_OUTPUT
+          echo "linux_amd64=$(get_sha 'linux_amd64.tar.gz')"    >> $GITHUB_OUTPUT
+
+      - name: Checkout tap repo
+        uses: actions/checkout@v4
+        with:
+          repository: shahneil76/homebrew-kubectl-inventory
+          token: ${{ secrets.TAP_GITHUB_TOKEN }}
+          path: tap
+
+      - name: Render new formula
+        env:
+          TAG: ${{ steps.version.outputs.TAG }}
+          VER: ${{ steps.version.outputs.VER }}
+          SHA_DARWIN_ARM64: ${{ steps.sha.outputs.darwin_arm64 }}
+          SHA_DARWIN_AMD64: ${{ steps.sha.outputs.darwin_amd64 }}
+          SHA_LINUX_ARM64:  ${{ steps.sha.outputs.linux_arm64 }}
+          SHA_LINUX_AMD64:  ${{ steps.sha.outputs.linux_amd64 }}
+        run: |
+          mkdir -p tap/Formula
+          cat > tap/Formula/kubectl-inventory.rb <<EOF
+          # typed: false
+          # frozen_string_literal: true
+
+          class KubectlInventory < Formula
+            desc "Complete Kubernetes namespace inventory with orphan and stuck finalizer detection"
+            homepage "https://github.com/shahneil76/kubectl-inventory"
+            version "${VER}"
+            license "MIT"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/shahneil76/kubectl-inventory/releases/download/${TAG}/kubectl-inventory_${VER}_darwin_arm64.tar.gz"
+                sha256 "${SHA_DARWIN_ARM64}"
+              end
+              on_intel do
+                url "https://github.com/shahneil76/kubectl-inventory/releases/download/${TAG}/kubectl-inventory_${VER}_darwin_amd64.tar.gz"
+                sha256 "${SHA_DARWIN_AMD64}"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "https://github.com/shahneil76/kubectl-inventory/releases/download/${TAG}/kubectl-inventory_${VER}_linux_arm64.tar.gz"
+                sha256 "${SHA_LINUX_ARM64}"
+              end
+              on_intel do
+                url "https://github.com/shahneil76/kubectl-inventory/releases/download/${TAG}/kubectl-inventory_${VER}_linux_amd64.tar.gz"
+                sha256 "${SHA_LINUX_AMD64}"
+              end
+            end
+
+            def install
+              bin.install "kubectl-inventory"
+            end
+
+            test do
+              assert_match "kubectl-inventory", shell_output("#{bin}/kubectl-inventory --help 2>&1")
+            end
+          end
+          EOF
+
+      - name: Commit and push to tap
+        working-directory: tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/kubectl-inventory.rb
+          git diff --staged --quiet && echo "No changes" || \
+            git commit -m "kubectl-inventory ${{ steps.version.outputs.VER }}" && \
+            git push
