@@ -30,8 +30,9 @@ type globalOptions struct {
 	NoColor bool
 
 	// Kubeconfig
-	Kubeconfig string
-	Context    string
+	Kubeconfig    string
+	Context       string
+	ListContexts  bool
 
 	// Age filter (orphan analysis)
 	AgeRaw string
@@ -84,8 +85,9 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&opts.Namespace, "namespace", "n", "", "Target namespace (default: current context namespace)")
 	rootCmd.PersistentFlags().BoolVarP(&opts.AllNamespaces, "all-namespaces", "A", false, "Scan all namespaces")
 	rootCmd.PersistentFlags().StringVarP(&opts.Output, "output", "o", "table", "Output format: table, json, tree, wide")
-	rootCmd.PersistentFlags().StringVar(&opts.Kubeconfig, "kubeconfig", "", "Path to kubeconfig")
-	rootCmd.PersistentFlags().StringVar(&opts.Context, "context", "", "Kubeconfig context to use")
+	rootCmd.PersistentFlags().StringVar(&opts.Kubeconfig, "kubeconfig", "", "Path to kubeconfig file (overrides KUBECONFIG env var)")
+	rootCmd.PersistentFlags().StringVar(&opts.Context, "context", "", "Kubeconfig context name to use (overrides current-context)")
+	rootCmd.PersistentFlags().BoolVar(&opts.ListContexts, "list-contexts", false, "List all available kubeconfig contexts and exit")
 	rootCmd.PersistentFlags().BoolVar(&opts.IncludeSystem, "include-system", false, "Include kube-system and other system namespaces")
 	rootCmd.PersistentFlags().StringVar(&opts.AgeRaw, "age", "", "Filter orphan resources older than duration (e.g. 30d, 7d, 24h)")
 	rootCmd.PersistentFlags().BoolVar(&opts.NoColor, "no-color", false, "Disable color output")
@@ -115,6 +117,27 @@ func init() {
 }
 
 func runScan(cmd *cobra.Command, args []string) error {
+	// --list-contexts: print available contexts and exit without scanning.
+	if opts.ListContexts {
+		current, contexts, err := client.ListContexts(opts.Kubeconfig)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "CURRENT\tNAME\n")
+		for _, ctx := range contexts {
+			marker := " "
+			name := ctx[2:] // strip leading "* " or "  "
+			if strings.HasPrefix(ctx, "* ") {
+				marker = "*"
+			}
+			if name == current {
+				marker = "*"
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", marker, name)
+		}
+		return nil
+	}
+
 	inv, err := scanInventory(cmd.Context(), opts.Namespace, opts.AllNamespaces)
 	if err != nil {
 		return err
