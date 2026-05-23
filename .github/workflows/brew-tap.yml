@@ -56,7 +56,7 @@ jobs:
           # frozen_string_literal: true
 
           class KubectlInventory < Formula
-            desc "Complete Kubernetes namespace inventory with orphan and stuck finalizer detection"
+            desc "Complete Kubernetes inventory with orphan detection, web UI, and posture audit"
             homepage "https://github.com/shahneil76/kubectl-inventory"
             version "${VER}"
             license "MIT"
