@@ -8,16 +8,20 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/shahneil76/kubectl-inventory/pkg/audit"
 	"github.com/shahneil76/kubectl-inventory/pkg/types"
 )
 
 // Server holds the HTTP server and inventory state.
 type Server struct {
-	inv    *types.Inventory
-	port   int
-	server *http.Server
+	inv           *types.Inventory
+	port          int
+	server        *http.Server
+	auditSettings *audit.Config
+	auditMu       sync.RWMutex
 }
 
 // New creates a new web server with the given inventory and port.
@@ -33,7 +37,10 @@ func New(inv *types.Inventory, port int) *Server {
 	mux.HandleFunc("/api/namespaces", s.handleNamespaces)
 	mux.HandleFunc("/api/contexts", s.handleContexts)
 	mux.HandleFunc("/api/resources", s.handleResources)
-	mux.HandleFunc("/api/canvas", s.handleCanvas)
+	mux.HandleFunc("/api/audit", s.handleAudit)
+	mux.HandleFunc("/api/audit/export.pdf", s.handleAuditExport)
+	mux.HandleFunc("/api/audit/resource", s.handleAuditResource)
+	mux.HandleFunc("/api/settings/audit", s.handleAuditSettings)
 
 	// Static UI
 	mux.Handle("/", http.FileServer(staticFiles))
@@ -72,7 +79,7 @@ func (s *Server) URL() string {
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, PUT, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -408,236 +415,5 @@ func formatAge(d time.Duration) string {
 		return fmt.Sprintf("%dh", int(d.Hours()))
 	default:
 		return fmt.Sprintf("%dd", int(d.Hours()/24))
-	}
-}
-
-// ─── Canvas types & handler ───────────────────────────────────────────────────
-
-type CanvasNode struct {
-	ID        string            `json:"id"`
-	Name      string            `json:"name"`
-	Kind      string            `json:"kind"`
-	Namespace string            `json:"namespace"`
-	Signal    string            `json:"signal"`
-	Age       string            `json:"age"`
-	Meta      map[string]string `json:"meta"`
-}
-
-type CanvasEdge struct {
-	From string `json:"from"`
-	To   string `json:"to"`
-	Type string `json:"type"` // owner | spec | gen | dang
-}
-
-type CanvasResponse struct {
-	Nodes []CanvasNode `json:"nodes"`
-	Edges []CanvasEdge `json:"edges"`
-}
-
-// handleCanvas returns real resource instances with owner-ref edges for the canvas view.
-// Strategy: find root nodes that have children, BFS their subtrees first, then fill
-// remaining slots with high-signal isolated nodes.
-func (s *Server) handleCanvas(w http.ResponseWriter, r *http.Request) {
-	ns := r.URL.Query().Get("namespace")
-
-	// Build full UID map
-	uidMap := map[string]types.Resource{}
-	for _, res := range s.inv.Resources {
-		uidMap[string(res.UID)] = res
-	}
-
-	// Filter by namespace
-	var pool []types.Resource
-	for _, res := range s.inv.Resources {
-		if ns != "" && ns != "*" && res.Namespace != ns {
-			continue
-		}
-		pool = append(pool, res)
-	}
-
-	// Build parent/child maps within the pool
-	poolUIDs := map[string]bool{}
-	for _, r := range pool {
-		poolUIDs[string(r.UID)] = true
-	}
-	childUIDs := map[string]bool{} // UIDs that have at least one child in pool
-	parentUID := map[string]string{} // child UID -> parent UID (first owner in pool)
-	for _, res := range pool {
-		for _, ref := range res.OwnerRefs {
-			ownerUID := string(ref.UID)
-			if poolUIDs[ownerUID] {
-				childUIDs[ownerUID] = true
-				if parentUID[string(res.UID)] == "" {
-					parentUID[string(res.UID)] = ownerUID
-				}
-			}
-		}
-	}
-
-	// Prefer "root" resources that have at least one child (real tree roots)
-	var treeRoots, leaves, isolated []types.Resource
-	for _, res := range pool {
-		uid := string(res.UID)
-		hasParent := parentUID[uid] != ""
-		hasChild := childUIDs[uid]
-		switch {
-		case !hasParent && hasChild:
-			treeRoots = append(treeRoots, res)
-		case hasParent:
-			leaves = append(leaves, res)
-		default:
-			isolated = append(isolated, res)
-		}
-	}
-
-	// Sort tree roots by number of descendants (prefer richer trees)
-	sort.SliceStable(treeRoots, func(i, j int) bool {
-		return signalScore(signalFor(treeRoots[i])) > signalScore(signalFor(treeRoots[j]))
-	})
-
-	// Sort isolated by signal score descending
-	sort.SliceStable(isolated, func(i, j int) bool {
-		return signalScore(signalFor(isolated[i])) > signalScore(signalFor(isolated[j]))
-	})
-
-	// BFS from tree roots up to maxNodes
-	const maxNodes = 40
-	included := map[string]bool{}
-	var selected []types.Resource
-
-	// Index pool by UID for quick lookup
-	poolByUID := map[string]types.Resource{}
-	for _, r := range pool {
-		poolByUID[string(r.UID)] = r
-	}
-	// Build childrenOf map
-	childrenOf := map[string][]string{}
-	for _, res := range pool {
-		for _, ref := range res.OwnerRefs {
-			ownerUID := string(ref.UID)
-			if poolUIDs[ownerUID] {
-				childrenOf[ownerUID] = append(childrenOf[ownerUID], string(res.UID))
-			}
-		}
-	}
-
-	var bfsQueue []string
-	for _, root := range treeRoots {
-		if len(selected) >= maxNodes {
-			break
-		}
-		uid := string(root.UID)
-		if included[uid] {
-			continue
-		}
-		bfsQueue = append(bfsQueue, uid)
-		for len(bfsQueue) > 0 && len(selected) < maxNodes {
-			cur := bfsQueue[0]
-			bfsQueue = bfsQueue[1:]
-			if included[cur] {
-				continue
-			}
-			included[cur] = true
-			if res, ok := poolByUID[cur]; ok {
-				selected = append(selected, res)
-			}
-			for _, childUID := range childrenOf[cur] {
-				if !included[childUID] {
-					bfsQueue = append(bfsQueue, childUID)
-				}
-			}
-		}
-	}
-
-	// Fill remaining with leaves that have parents already selected
-	for _, res := range leaves {
-		if len(selected) >= maxNodes {
-			break
-		}
-		uid := string(res.UID)
-		if !included[uid] && included[parentUID[uid]] {
-			included[uid] = true
-			selected = append(selected, res)
-		}
-	}
-
-	// Fill remaining with isolated high-signal resources
-	for _, res := range isolated {
-		if len(selected) >= maxNodes {
-			break
-		}
-		uid := string(res.UID)
-		if !included[uid] {
-			included[uid] = true
-			selected = append(selected, res)
-		}
-	}
-
-	// Build nodes
-	nodes := make([]CanvasNode, 0, len(selected))
-	for _, res := range selected {
-		api := res.Group
-		if api == "" {
-			api = "core/v1"
-		} else {
-			api = api + "/" + res.Version
-		}
-		nodes = append(nodes, CanvasNode{
-			ID:        string(res.UID),
-			Name:      res.Name,
-			Kind:      res.Kind,
-			Namespace: res.Namespace,
-			Signal:    signalFor(res),
-			Age:       formatAge(res.Age),
-			Meta: map[string]string{
-				"KIND": res.Kind,
-				"API":  api,
-				"NS":   res.Namespace,
-			},
-		})
-	}
-
-	// Build edges from owner references
-	includedUIDs := included
-	var edges []CanvasEdge
-	for _, res := range selected {
-		sig := signalFor(res)
-		for _, ref := range res.OwnerRefs {
-			ownerUID := string(ref.UID)
-			if !includedUIDs[ownerUID] {
-				continue
-			}
-			edgeType := "owner"
-			if sig == "GEN" {
-				edgeType = "gen"
-			} else if sig == "DANG" {
-				edgeType = "dang"
-			}
-			edges = append(edges, CanvasEdge{
-				From: ownerUID,
-				To:   string(res.UID),
-				Type: edgeType,
-			})
-		}
-	}
-
-	writeJSON(w, CanvasResponse{Nodes: nodes, Edges: edges})
-}
-
-
-func signalScore(sig string) int {
-	switch sig {
-	case "DANG":
-		return 5
-	case "STUCK":
-		return 4
-	case "SUSP":
-		return 3
-	case "GEN":
-		return 2
-	case "REF":
-		return 1
-	default:
-		return 0
 	}
 }

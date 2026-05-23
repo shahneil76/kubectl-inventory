@@ -1,6 +1,7 @@
 # Binaries
 bin/
 dist/
+kubectl-inventory
 
 # Test artifacts
 *.test
@@ -30,3 +31,6 @@ dist/
 # Web UI design source files (not part of the build)
 Web-UI/
 Images/
+
+# Local reference code (not part of this repo)
+radar/

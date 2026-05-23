@@ -55,8 +55,6 @@ Duration:         7.8s
 
 ---
 
----
-
 ## Features
 
 - **Complete inventory** — every API resource in a namespace, including all CRDs, grouped by API group
@@ -71,7 +69,8 @@ Duration:         7.8s
 - **Filters** — `--api-groups`, `--resources`, `--exclude-*`, `--selector`
 - **Performance controls** — `--concurrency`, `--request-timeout`, `--deep`
 - **Read-only** — only calls `List`; zero cluster-side installation
-- **Web UI** — live cyberpunk dashboard with radar, health, dependency canvas, and drill-down views
+- **Web UI** — live cyberpunk dashboard with radar, posture audit, health, and drill-down views
+- **Posture audit** — inventory-native posture report with ranked action queue and PDF export
 
 ---
 
@@ -89,29 +88,43 @@ This starts a local server on `http://localhost:8989` and opens your browser aut
 |--------|-------------|
 | **CONNECT** | Cluster context selector |
 | **RADAR** | Real-time resource grid grouped by API group with signal chips |
+| **POSTURE** | Inventory-native posture report — Posture Index, action queue, namespace heatmap, PDF export |
 | **NAMESPACES** | Filter the radar by namespace |
 | **HEALTH** | Cluster health summary with signal breakdown and trend sparklines |
-| **CANVAS** | Interactive dependency graph — owner-ref trees with SVG edges, click any node for details |
+
+### Posture report
+
+The **POSTURE** tab blends best-practice checks with signals only a deep inventory scan can produce:
+
+- **Posture Index** — 0–100 score with letter grade
+- **Inventory DNA** — dangling owners, stuck finalizers, suspicious orphans, GitOps drift
+- **Compound risk** — audit finding plus bad inventory signal (e.g. must-fix + DANG/STUCK)
+- **Action queue** — top fixes ranked by impact score
+- **Namespace heatmap** — per-namespace grades in the scope rail
+- **PDF export** — one-click report from the UI or CLI
+
+```bash
+# Export posture PDF from CLI
+kubectl inventory audit --output pdf --file report.pdf
+
+# JSON for automation
+kubectl inventory audit -o json
+kubectl inventory audit -A -o json
+```
+
+Web API:
+
+```bash
+curl -o report.pdf 'http://localhost:8989/api/audit/export.pdf?namespace=*'
+```
 
 ### Screenshots
 
 ![RADAR — live resource grid grouped by API group](docs/ui-radar.png)
 
-![CANVAS — resource dependency tree with SVG edges](docs/ui-canvas.png)
-
 ![HEALTH — cluster health summary with signal breakdown](docs/ui-health.png)
 
 ![DRILL — per-kind resource table with signal + age](docs/ui-drill.png)
-
-### Canvas user flow
-
-1. Click **CANVAS** in the nav — the server runs a BFS over owner-references and returns up to 40 connected resources
-2. Nodes with owner-refs are laid out in depth columns (root resources on the left, leaves on the right)
-3. Isolated resources appear in a 4-column grid
-4. **Click any node** → detail panel opens showing namespace, age, status, incoming references
-5. **COPY KUBECTL COMMAND** → copies `kubectl get <kind> <name> -n <ns> -o yaml` to clipboard
-6. **DRILL INTO KIND** → switches to the full resource table for that kind
-7. Scroll-wheel or `+`/`−` buttons to zoom; drag background to pan
 
 ---
 
@@ -273,6 +286,13 @@ kubectl inventory stuck -n production
 
 # Diff two namespaces
 kubectl inventory diff -n staging -n production
+
+# Posture audit (table summary)
+kubectl inventory audit -n production
+
+# Posture audit as JSON or PDF
+kubectl inventory audit -A -o json
+kubectl inventory audit --output pdf --file posture-report.pdf
 ```
 
 ---
@@ -329,6 +349,8 @@ kubectl inventory diff -n staging -n production
 | JSON output | ✅ |
 | Read-only, zero cluster-side install | ✅ |
 | Web UI (`kubectl inventory web`) | ✅ |
+| Posture audit (`kubectl inventory audit`) | ✅ |
+| Posture PDF export | ✅ |
 
 See [PERFORMANCE.md](PERFORMANCE.md) for how the fast scan works.
 

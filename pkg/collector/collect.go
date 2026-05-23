@@ -48,6 +48,11 @@ var deepKinds = map[string]bool{
 	"HorizontalPodAutoscaler": true,
 	"RoleBinding":            true,
 	"ClusterRoleBinding":     true,
+	"ConfigMap":              true,
+	"Secret":                 true,
+	"ServiceAccount":         true,
+	"LimitRange":             true,
+	"PodDisruptionBudget":    true,
 }
 
 // Options controls collection behaviour.

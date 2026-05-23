@@ -1,8 +1,9 @@
 // kubectl-inventory // radar — SPA
 const API = '';
-let state = { screen:'connect', ns:'*', inv:null, alerts:null, namespaces:[], radar:null, health:[], resources:[], canvasData:null, drillGroup:null, drillKind:null, alertFilter:'ALL', scale:1, panX:0, panY:0 };
+let state = { screen:'connect', ns:'*', inv:null, alerts:null, namespaces:[], radar:null, health:[], resources:[], drillGroup:null, drillKind:null, alertFilter:'ALL', audit:null, auditError:null, auditSettings:null, auditNsScope:'ALL', auditLens:{}, auditPriority:{}, auditFramework:{}, auditSearch:'', auditExpandedNS:{}, auditExpanded:{}, auditShowSettings:false, auditSettingsDraft:null };
 
 async function api(path){ const r=await fetch(API+path); return r.json(); }
+async function apiPut(path,body){ const r=await fetch(API+path,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); return r.json(); }
 
 function h(tag,attrs,children){
   attrs=attrs||{}; children=Array.isArray(children)?children:(children!=null?[children]:[]);
@@ -18,16 +19,16 @@ function h(tag,attrs,children){
 }
 
 function renderNav(){
-  const screens=[['connect','CONNECT'],['radar','RADAR'],['namespaces','NAMESPACES'],['health','HEALTH'],['canvas','CANVAS']];
+  const screens=[['connect','CONNECT'],['radar','RADAR'],['audit','POSTURE'],['namespaces','NAMESPACES'],['health','HEALTH']];
   return h('div',{class:'nav'},[h('span',{class:'nav-brand'},['kubectl-inventory']),...screens.map(([id,label])=>h('button',{class:'nav-btn'+(state.screen===id?' active':''),onClick:()=>navigate(id)},[label]))]);
 }
 
 function navigate(screen){
   state.screen=screen; render();
   if(screen==='radar')loadRadar();
+  else if(screen==='audit')loadAudit();
   else if(screen==='health')loadHealth();
   else if(screen==='namespaces')loadNamespaces();
-  else if(screen==='canvas')loadCanvas();
 }
 
 function renderLoading(msg){ msg=msg||'SCANNING RESOURCES...'; return h('div',{class:'loading'},[h('div',{class:'loading-text'},[msg]),h('div',{class:'loading-sub'},['please wait'])]); }
@@ -136,263 +137,538 @@ async function loadResourcesBySignal(cls){
   render();
 }
 
-// ── Canvas ────────────────────────────────────────────────────────────────────
-async function loadCanvas(){
-  state.canvasData=null; state.selectedCanvasNode=null; render();
-  try{ state.canvasData=await api('/api/canvas?namespace='+encodeURIComponent(state.ns)); }
-  catch(e){ console.error('canvas error',e); state.canvasData={nodes:[],edges:[]}; }
+// ── Audit ─────────────────────────────────────────────────────────────────────
+const AUDIT_LENS_MAP={hardening:'Security',resilience:'Reliability',rightsizing:'Efficiency',inventory:'Reliability'};
+const AUDIT_LENS_LABELS=[['hardening','Hardening'],['resilience','Resilience'],['rightsizing','Right-sizing'],['inventory','Inventory DNA']];
+const AUDIT_PRIORITY_LABELS=[['mustfix','Must-fix'],['advisory','Advisory']];
+
+function auditResetFilters(){
+  state.auditLens={}; state.auditPriority={}; state.auditFramework={}; state.auditSearch=''; state.auditNsScope='ALL';
+}
+
+function auditToggleFilter(bucket,key){
+  if(!state[bucket]) state[bucket]={};
+  if(state[bucket][key]) delete state[bucket][key];
+  else state[bucket][key]=true;
   render();
 }
 
-function iconFor(kind){
-  const icons={
-    Deployment:'<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>',
-    ReplicaSet:'<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>',
-    StatefulSet:'<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>',
-    DaemonSet:'<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>',
-    Pod:'<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>',
-    Service:'<circle cx="12" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><path d="M10 8l-3 8M14 8l3 8M7 19h10"/>',
-    Ingress:'<circle cx="12" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><path d="M10 8l-3 8M14 8l3 8M7 19h10"/>',
-    EndpointSlice:'<circle cx="12" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><path d="M10 8l-3 8M14 8l3 8M7 19h10"/>',
-    NetworkPolicy:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
-    Secret:'<path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>',
-    ConfigMap:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>',
-    HorizontalPodAutoscaler:'<path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>',
-    ServiceAccount:'<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
-    CronJob:'<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
-    Job:'<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
-  };
-  const d=icons[kind]||'<circle cx="12" cy="12" r="9"/>';
-  return '<svg viewBox="0 0 24 24">'+d+'</svg>';
+function auditHasChipFilters(){
+  return Object.keys(state.auditLens||{}).length>0
+    || Object.keys(state.auditPriority||{}).length>0
+    || Object.keys(state.auditFramework||{}).length>0;
 }
 
-function chipClass(sig){
-  const m={CLEAN:'clean',GEN:'gen',DANG:'dang',SUSP:'susp',REF:'ref',OWNED:'owned',STUCK:'stuck'};
-  return 'chip chip-'+(m[sig]||'clean');
+function auditFindingMatches(f, checks){
+  const lensActive=Object.keys(state.auditLens||{}).filter(k=>state.auditLens[k]);
+  if(lensActive.length){
+    const isInv=(f.checkID||'').startsWith('inventory:');
+    const invOn=!!state.auditLens.inventory;
+    const stdOn=lensActive.some(k=>k!=='inventory');
+    if(invOn&&stdOn){
+      const cats=lensActive.filter(k=>k!=='inventory').map(k=>AUDIT_LENS_MAP[k]).filter(Boolean);
+      if(!isInv&&!cats.includes(f.category)) return false;
+    }else if(invOn){
+      if(!isInv) return false;
+    }else{
+      if(isInv) return false;
+      const cats=lensActive.map(k=>AUDIT_LENS_MAP[k]).filter(Boolean);
+      if(!cats.includes(f.category)) return false;
+    }
+  }
+  const priActive=Object.keys(state.auditPriority||{}).filter(k=>state.auditPriority[k]);
+  if(priActive.length){
+    const ok=(state.auditPriority.mustfix&&f.severity==='danger')
+      ||(state.auditPriority.advisory&&f.severity==='warning');
+    if(!ok) return false;
+  }
+  const fwActive=Object.keys(state.auditFramework||{}).filter(k=>state.auditFramework[k]);
+  if(fwActive.length&&checks){
+    const fws=(checks[f.checkID]&&checks[f.checkID].frameworks)||[];
+    if(!fws.some(fw=>state.auditFramework[fw])) return false;
+  }
+  return true;
 }
 
-function renderCanvas(){
-  const inv=state.inv||{};
-  if(!state.canvasData) return h('div',{class:'canvas-cockpit'},[h('div',{class:'canvas-header'},[h('div',{class:'branding'},[h('h1',{},['kubectl-inventory // canvas'])]),renderLoading('BUILDING CANVAS...')])]);
-  const nodes=state.canvasData.nodes||[];
-  const edges=state.canvasData.edges||[];
+function auditGroupKey(g){ return (g.kind||'')+'|'+(g.namespace||'')+'|'+(g.name||''); }
+function auditNsKey(ns){ return ns||'(cluster-scoped)'; }
 
-  // BFS depth
-  const childOf={}, parentOf={};
-  edges.forEach(e=>{ if(!childOf[e.from])childOf[e.from]=[]; childOf[e.from].push(e.to); parentOf[e.to]=e.from; });
-  const depth={};
-  nodes.filter(n=>!parentOf[n.id]).forEach(n=>{ const q=[{id:n.id,d:0}]; while(q.length){const {id,d}=q.shift();if(depth[id]!==undefined)continue;depth[id]=d;(childOf[id]||[]).forEach(c=>q.push({id:c,d:d+1}));} });
-  nodes.forEach(n=>{ if(depth[n.id]===undefined)depth[n.id]=0; });
+function auditFilteredGroups(){
+  const groups=(state.audit&&state.audit.groups)||[];
+  const checks=(state.audit&&state.audit.checks)||{};
+  const q=(state.auditSearch||'').toLowerCase().trim();
+  const nsScope=state.auditNsScope||'ALL';
+  return groups.map(g=>{
+    if(nsScope!=='ALL'&&auditNsKey(g.namespace)!==nsScope) return null;
+    const findings=(g.findings||[]).filter(f=>auditFindingMatches(f,checks));
+    if(findings.length===0) return null;
+    if(q){
+      const hay=[
+        g.kind,g.name,g.namespace||'',
+        ...findings.map(f=>{
+          const meta=checks[f.checkID]||{};
+          return [f.message,f.category,f.severity,meta.title,meta.description,meta.remediation,f.checkID].join(' ');
+        })
+      ].join(' ').toLowerCase();
+      if(!hay.includes(q)) return null;
+    }
+    return {
+      ...g,findings,
+      danger:findings.filter(f=>f.severity==='danger').length,
+      warning:findings.filter(f=>f.severity==='warning').length
+    };
+  }).filter(Boolean);
+}
 
-  // Layout positions
-  const NW=240, NH=108, GAPX=80, GAPY=16;
-  const colCount={}, pos={};
-  const hasEdges=edges.length>0;
-  const GCOLS=4;
-  nodes.forEach((n,idx)=>{
-    if(hasEdges){ const col=depth[n.id]||0; const row=colCount[col]||0; colCount[col]=row+1; pos[n.id]={x:col*(NW+GAPX)+24,y:row*(NH+GAPY)+24}; }
-    else { pos[n.id]={x:(idx%GCOLS)*(NW+GAPX)+24,y:Math.floor(idx/GCOLS)*(NH+GAPY)+24}; }
+function auditNamespaceIndex(groups){
+  const m={};
+  groups.forEach(g=>{
+    const ns=auditNsKey(g.namespace);
+    if(!m[ns]) m[ns]={resources:0,danger:0,warning:0};
+    m[ns].resources++;
+    m[ns].danger+=g.danger||0;
+    m[ns].warning+=g.warning||0;
   });
-
-  // Canvas size
-  const allP=Object.values(pos);
-  const cW=allP.length?Math.max(...allP.map(p=>p.x))+NW+60:800;
-  const cH=allP.length?Math.max(...allP.map(p=>p.y))+NH+60:500;
-
-  // Outer wrap (scrollable/pannable)
-  const wrap=document.createElement('div');
-  wrap.className='canvas-wrap';
-  wrap.addEventListener('wheel',e=>{ e.preventDefault(); state.scale=Math.max(.2,Math.min(3,state.scale-e.deltaY*.001)); applyTransform(); },{passive:false});
-  let panning=false, panStart={x:0,y:0};
-  wrap.addEventListener('mousedown',e=>{ if(!e.target.closest('.node')&&!e.target.closest('.panel')){ panning=true; panStart={x:e.clientX-state.panX,y:e.clientY-state.panY}; wrap.style.cursor='grabbing'; } });
-  document.addEventListener('mousemove',e=>{ if(panning){ state.panX=e.clientX-panStart.x; state.panY=e.clientY-panStart.y; applyTransform(); } });
-  document.addEventListener('mouseup',()=>{ panning=false; wrap.style.cursor=''; });
-
-  // Inner (transformable)
-  const inner=document.createElement('div');
-  inner.className='canvas-inner';
-  inner.style.cssText='width:'+cW+'px;height:'+cH+'px;';
-  wrap.appendChild(inner);
-
-  // SVG — must match inner size exactly
-  const SN='http://www.w3.org/2000/svg';
-  const svg=document.createElementNS(SN,'svg');
-  svg.setAttribute('width',cW); svg.setAttribute('height',cH);
-  svg.setAttribute('viewBox','0 0 '+cW+' '+cH);
-  svg.style.cssText='position:absolute;top:0;left:0;pointer-events:none;z-index:1;';
-  inner.appendChild(svg);
-
-  // Draw edges
-  const eCol={owner:'#4b5563',gen:'#bf5af2',dang:'#ff3b30',spec:'#6b7280'};
-  const eDash={dang:'6,4',spec:'4,4'};
-  edges.forEach(e=>{
-    const fp=pos[e.from], tp=pos[e.to]; if(!fp||!tp)return;
-    const x1=fp.x+NW, y1=fp.y+NH/2, x2=tp.x, y2=tp.y+NH/2;
-    const cx1=x1+GAPX*0.55, cx2=x2-GAPX*0.55;
-    const path=document.createElementNS(SN,'path');
-    path.setAttribute('d','M '+x1+' '+y1+' C '+cx1+' '+y1+' '+cx2+' '+y2+' '+x2+' '+y2);
-    path.setAttribute('fill','none');
-    path.setAttribute('stroke',eCol[e.type]||'#4b5563');
-    path.setAttribute('stroke-width','1.5');
-    if(eDash[e.type]) path.setAttribute('stroke-dasharray',eDash[e.type]);
-    svg.appendChild(path);
+  return Object.entries(m).sort((a,b)=>{
+    if(b[1].danger!==a[1].danger) return b[1].danger-a[1].danger;
+    if(b[1].warning!==a[1].warning) return b[1].warning-a[1].warning;
+    return a[0].localeCompare(b[0]);
   });
+}
 
-  // Draw nodes
-  const sel=state.selectedCanvasNode;
-  nodes.forEach(n=>{
-    const p=pos[n.id]||{x:0,y:0};
-    const sig=n.signal||'CLEAN';
-    const isRoot=!parentOf[n.id]&&childOf[n.id];
-    const isSel=sel&&sel.id===n.id;
+function auditGroupedByNamespace(groups){
+  const m={};
+  groups.forEach(g=>{
+    const ns=auditNsKey(g.namespace);
+    if(!m[ns]) m[ns]=[];
+    m[ns].push(g);
+  });
+  return Object.entries(m).sort((a,b)=>{
+    const ad=a[1].reduce((n,g)=>n+g.danger,0), bd=b[1].reduce((n,g)=>n+g.danger,0);
+    if(bd!==ad) return bd-ad;
+    const aw=a[1].reduce((n,g)=>n+g.warning,0), bw=b[1].reduce((n,g)=>n+g.warning,0);
+    if(bw!==aw) return bw-aw;
+    return a[0].localeCompare(b[0]);
+  });
+}
 
-    const nd=document.createElement('div');
-    nd.className='node'+(isRoot?' root':'')+(isSel?' is-selected':'');
-    nd.style.cssText='left:'+p.x+'px;top:'+p.y+'px;z-index:2;';
-    nd.addEventListener('click',()=>{ state.selectedCanvasNode=n; renderCanvasPanel(wrap,nodes,edges); nd.parentElement.querySelectorAll('.node').forEach(x=>x.classList.remove('is-selected')); nd.classList.add('is-selected'); });
+function auditFrameworksAvailable(checks){
+  const set={};
+  Object.values(checks||{}).forEach(c=>(c.frameworks||[]).forEach(fw=>{ set[fw]=true; }));
+  return Object.keys(set).sort();
+}
 
-    // Header
-    const hdr=document.createElement('div'); hdr.className='node-header';
-    const tw=document.createElement('div'); tw.className='node-title-wrap';
-    const ic=document.createElement('div'); ic.className='node-icon'; ic.innerHTML=iconFor(n.kind);
-    const tl=document.createElement('div'); tl.className='node-title'; tl.textContent=n.name;
-    tw.appendChild(ic); tw.appendChild(tl);
-    const chip=document.createElement('div'); chip.className=chipClass(sig); chip.textContent=sig;
-    hdr.appendChild(tw); hdr.appendChild(chip);
+async function loadAudit(){
+  state.audit=null; state.auditError=null; auditResetFilters(); state.auditExpandedNS={}; state.auditExpanded={}; render();
+  try{
+    const [audit,settings]=await Promise.all([
+      api('/api/audit?namespace='+encodeURIComponent(state.ns)),
+      api('/api/settings/audit')
+    ]);
+    state.audit=audit; state.auditSettings=settings;
+    const groups=audit.groups||[];
+    if(groups.length>0){
+      const byNs=auditGroupedByNamespace(groups.map(g=>({...g,danger:(g.findings||[]).filter(f=>f.severity==='danger').length,warning:(g.findings||[]).filter(f=>f.severity==='warning').length})));
+      if(byNs.length) state.auditExpandedNS[byNs[0][0]]=true;
+    }
+  }catch(e){
+    console.error(e);
+    state.auditError='Failed to load audit data — restart the web server after rebuilding.';
+  }
+  render();
+}
 
-    // Body
-    const body=document.createElement('div'); body.className='node-body';
-    [{k:'KIND',v:n.kind},{k:'NS',v:n.namespace||'—'},{k:'AGE',v:n.age}].forEach(({k,v})=>{
-      const row=document.createElement('div'); row.className='node-meta';
-      row.innerHTML='<span class="key">'+k+'</span><span>'+v+'</span>';
-      body.appendChild(row);
+async function exportAuditPDF(){
+  try{
+    const r=await fetch('/api/audit/export.pdf?namespace='+encodeURIComponent(state.ns));
+    if(!r.ok) throw new Error('export failed');
+    const blob=await r.blob();
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;
+    a.download='kubectl-inventory-posture-'+new Date().toISOString().slice(0,10)+'.pdf';
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }catch(e){ console.error(e); alert('PDF export failed'); }
+}
+
+function renderPostureBanner(){
+  const p=(state.audit&&state.audit.posture)||{};
+  const inv=state.audit&&state.audit.inventoryFindings||0;
+  const compound=state.audit&&state.audit.compoundFindings||0;
+  const cls=p.score>=75?'clean':p.score>=50?'susp':'dang';
+  return h('div',{class:'posture-banner stat-block '+cls},[
+    h('div',{class:'posture-banner-main'},[
+      h('div',{class:'posture-grade'},[p.grade||'—']),
+      h('div',{},[
+        h('div',{class:'posture-headline'},[p.headline||'Posture Index']),
+        h('div',{class:'posture-desc'},[p.description||''])
+      ]),
+      h('div',{class:'posture-score'},[String(p.score!=null?p.score:'—')])
+    ]),
+    h('div',{class:'posture-meta'},[
+      inv>0?h('span',{class:'sig sig-GEN'},['INVENTORY ',h('strong',{},[String(inv)])]):null,
+      compound>0?h('span',{class:'sig sig-DANG'},['COMPOUND ',h('strong',{},[String(compound)])]):null
+    ])
+  ]);
+}
+
+function renderActionQueue(){
+  const queue=(state.audit&&state.audit.actionQueue)||[];
+  if(!queue.length) return null;
+  const top=queue.slice(0,8);
+  return h('div',{class:'action-queue'},[
+    h('div',{class:'action-queue-hdr'},[h('span',{class:'sidebar-title'},['Priority action queue']),h('span',{class:'audit-ns-meta'},['impact-ranked fixes'])]),
+    h('div',{class:'action-queue-list'},[...top.map(item=>h('div',{class:'action-queue-item'+(item.compound?' compound':'')},[
+      h('span',{class:'action-rank'},['#'+item.rank]),
+      h('div',{class:'action-body'},[
+        h('div',{class:'action-title'},[item.title]),
+        h('div',{class:'action-resource'},[item.kind+'/'+item.name+(item.namespace?' · '+item.namespace:'')]),
+        h('div',{class:'action-reason'},[item.reason])
+      ]),
+      h('span',{class:'sig sig-'+(item.severity==='danger'?'DANG':'SUSP')},[item.severity==='danger'?'FIX':'NOTE'])
+    ]))])
+  ]);
+}
+
+function renderAuditSummary(filtered){
+  const s=(state.audit&&state.audit.summary)||{danger:0,warning:0,categories:{}};
+  const useFiltered=filtered&&filtered.length>=0&&(auditHasChipFilters()||(state.auditSearch||'').trim()||state.auditNsScope!=='ALL');
+  let danger=0, warning=0;
+  const catCounts={Security:{danger:0,warning:0},Reliability:{danger:0,warning:0},Efficiency:{danger:0,warning:0}};
+  if(useFiltered){
+    filtered.forEach(f=>{
+      if(f.severity==='danger') danger++;
+      else if(f.severity==='warning') warning++;
+      if(catCounts[f.category]) catCounts[f.category][f.severity==='danger'?'danger':'warning']++;
     });
+  }else{
+    danger=s.danger||0; warning=s.warning||0;
+    ['Security','Reliability','Efficiency'].forEach(cat=>{
+      const cs=(s.categories&&s.categories[cat])||{};
+      catCounts[cat]={danger:cs.danger||0,warning:cs.warning||0};
+    });
+  }
+  const cats=[['Security','Hardening'],['Reliability','Resilience'],['Efficiency','Right-sizing']];
+  return h('div',{class:'audit-summary-grid'},[
+    h('div',{class:'audit-summary-total stat-block '+(danger>0?'dang':'clean')},[
+      h('div',{class:'stat-hdr'},[h('span',{class:'stat-title'},['Must-fix'])]),
+      h('div',{class:'stat-value'},[String(danger)])
+    ]),
+    h('div',{class:'audit-summary-total stat-block '+(warning>0?'susp':'clean')},[
+      h('div',{class:'stat-hdr'},[h('span',{class:'stat-title'},['Advisory'])]),
+      h('div',{class:'stat-value'},[String(warning)])
+    ]),
+    ...cats.map(([cat,label])=>{
+      const cs=catCounts[cat]||{danger:0,warning:0};
+      const cls=cs.danger>0?'dang':cs.warning>0?'susp':'clean';
+      return h('div',{class:'audit-cat-block stat-block '+cls},[
+        h('div',{class:'stat-hdr'},[h('span',{class:'stat-title'},[label])]),
+        h('div',{class:'audit-cat-counts'},[
+          cs.danger>0?h('span',{class:'sig sig-DANG'},['FIX ',h('strong',{},[String(cs.danger)])]):null,
+          cs.warning>0?h('span',{class:'sig sig-SUSP'},['NOTE ',h('strong',{},[String(cs.warning)])]):null,
+          cs.danger===0&&cs.warning===0?h('span',{class:'audit-pass'},['CLEAR']):null
+        ])
+      ]);
+    })
+  ]);
+}
 
-    nd.appendChild(hdr); nd.appendChild(body);
-    inner.appendChild(nd);
+function renderAuditFinding(f, checks, enriched){
+  const meta=(checks&&checks[f.checkID])||{};
+  const extra=enriched||{};
+  const lens=extra.lens||(Object.entries(AUDIT_LENS_MAP).find(([,v])=>v===f.category)||[])[0]||f.category;
+  const isInventory=(f.checkID||'').startsWith('inventory:');
+  return h('div',{class:'audit-finding'+(extra.compound?' compound':'')},[
+    h('div',{class:'audit-finding-hdr'},[
+      h('span',{class:'sig sig-'+(f.severity==='danger'?'DANG':'SUSP')},[f.severity==='danger'?'MUST-FIX':'ADVISORY']),
+      h('span',{class:'audit-check-title'},[meta.title||f.checkID]),
+      h('span',{class:'audit-cat-chip'},[lens]),
+      isInventory?h('span',{class:'audit-cat-chip inv'},['inventory DNA']):null,
+      extra.compound?h('span',{class:'audit-cat-chip compound'},['compound risk']):null,
+      extra.inventorySignal&&extra.inventorySignal!=='CLEAN'?h('span',{class:'sig sig-'+extra.inventorySignal},[extra.inventorySignal]):null
+    ]),
+    h('div',{class:'audit-finding-msg'},[f.message]),
+    meta.description?h('div',{class:'audit-finding-desc'},[meta.description]):null,
+    meta.remediation?h('div',{class:'audit-finding-fix'},['\u003e ',meta.remediation]):null,
+    (meta.frameworks&&meta.frameworks.length)?h('div',{class:'audit-frameworks'},[...meta.frameworks.map(fw=>h('span',{class:'audit-fw-chip'},[fw]))]):null
+  ]);
+}
+
+function renderAuditResourceGroup(g, checks, enrichedIndex){
+  const key=auditGroupKey(g);
+  const open=!!state.auditExpanded[key];
+  return h('div',{class:'audit-group'+(open?' open':'')},[
+    h('div',{class:'audit-group-hdr',onClick:()=>{ state.auditExpanded[key]=!open; render(); }},[
+      h('span',{class:'audit-expand'},[open?'▼':'▶']),
+      h('span',{class:'audit-res-id'},[g.kind+'/'+g.name]),
+      h('div',{class:'audit-group-badges'},[
+        g.danger>0?h('span',{class:'sig sig-DANG'},['FIX ',h('strong',{},[String(g.danger)])]):null,
+        g.warning>0?h('span',{class:'sig sig-SUSP'},['NOTE ',h('strong',{},[String(g.warning)])]):null
+      ]),
+      h('button',{class:'btn btn-sm',onClick:(e)=>{ e.stopPropagation(); openDrill('',g.kind); }},['Inspect'])
+    ]),
+    open?h('div',{class:'audit-group-body'},[...(g.findings||[]).map(f=>renderAuditFinding(f,checks, enrichedIndex&&enrichedIndex[f.checkID+'|'+key]))]):null
+  ]);
+}
+
+function enrichedIndexForFindings(){
+  const idx={};
+  (state.audit&&state.audit.enrichedFindings||[]).forEach(ef=>{
+    const k=ef.checkID+'|'+auditGroupKey({kind:ef.kind,namespace:ef.namespace,name:ef.name});
+    idx[k]=ef;
   });
+  return idx;
+}
 
-  // Legend
-  const leg=document.createElement('div'); leg.className='panel legend-panel';
-  const legTitle=document.createElement('div'); legTitle.className='panel-title-sm'; legTitle.textContent='CANVAS LEGEND'; leg.appendChild(legTitle);
-  [['#4b5563','0','OWNER REFERENCE'],['#6b7280','4,4','SPEC REFERENCE'],['#bf5af2','0','CONTROLLER GENERATED'],['#ff3b30','6,4','DANGLING / MISSING']].forEach(([col,dash,lbl])=>{
-    const row=document.createElement('div'); row.className='legend-item';
-    const s=document.createElementNS(SN,'svg'); s.setAttribute('width','22'); s.setAttribute('height','10');
-    const l=document.createElementNS(SN,'line'); l.setAttribute('x1','0'); l.setAttribute('y1','5'); l.setAttribute('x2','22'); l.setAttribute('y2','5'); l.setAttribute('stroke',col); l.setAttribute('stroke-width','1.5'); if(dash!=='0')l.setAttribute('stroke-dasharray',dash);
-    s.appendChild(l); row.appendChild(s); row.appendChild(document.createTextNode(lbl)); leg.appendChild(row);
-  });
-  wrap.appendChild(leg);
+function renderAuditNamespaceSection(ns, groups, checks, nsPosture){
+  const open=!!state.auditExpandedNS[ns];
+  const danger=groups.reduce((n,g)=>n+g.danger,0);
+  const warning=groups.reduce((n,g)=>n+g.warning,0);
+  const grade=nsPosture&&nsPosture.grade;
+  const enrichedIdx=enrichedIndexForFindings();
+  return h('div',{class:'audit-ns-section'+(open?' open':'')},[
+    h('div',{class:'audit-ns-hdr',onClick:()=>{
+      state.auditExpandedNS[ns]=!open;
+      if(!open){
+        groups.forEach(g=>{ state.auditExpanded[auditGroupKey(g)]=true; });
+      }
+      render();
+    }},[
+      h('span',{class:'audit-expand'},[open?'▼':'▶']),
+      h('span',{class:'audit-ns-title'},[ns]),
+      grade?h('span',{class:'posture-ns-grade'},['Grade '+grade]):null,
+      h('span',{class:'audit-ns-meta'},[groups.length+' resource'+(groups.length!==1?'s':'')]),
+      h('div',{class:'audit-group-badges'},[
+        danger>0?h('span',{class:'sig sig-DANG'},['FIX ',h('strong',{},[String(danger)])]):null,
+        warning>0?h('span',{class:'sig sig-SUSP'},['NOTE ',h('strong',{},[String(warning)])]):null
+      ])
+    ]),
+    open?h('div',{class:'audit-ns-body'},[...groups.map(g=>renderAuditResourceGroup(g,checks,enrichedIdx))]):null
+  ]);
+}
 
-  // Zoom controls
-  const zm=document.createElement('div'); zm.className='zoom-ctrl';
-  ['+','−','[]'].forEach((lbl,i)=>{
-    const b=document.createElement('button'); b.className='zoom-btn'; b.textContent=lbl;
-    b.addEventListener('click',()=>{ if(i===0)state.scale=Math.min(3,state.scale+.15); else if(i===1)state.scale=Math.max(.2,state.scale-.15); else{state.scale=1;state.panX=0;state.panY=0;} applyTransform(); });
-    zm.appendChild(b);
-  });
-  wrap.appendChild(zm);
+function renderAuditFilterChip(label, active, onClick, cls){
+  return h('button',{class:'filter-btn audit-chip'+(active?' active':'')+(cls?' '+cls:''),onClick},[label]);
+}
 
-  // If a node was previously selected, show its panel
-  if(sel) renderCanvasPanel(wrap,nodes,edges);
+function renderAuditNamespaceRail(allGroups){
+  const index=auditNamespaceIndex(allGroups);
+  const nsPostures={};
+  (state.audit&&state.audit.namespacePostures||[]).forEach(np=>{ nsPostures[np.namespace]=np; });
+  const totalDanger=allGroups.reduce((n,g)=>n+(g.danger||0),0);
+  const totalWarning=allGroups.reduce((n,g)=>n+(g.warning||0),0);
+  const totalResources=allGroups.length;
+  const clusterGrade=state.audit&&state.audit.posture&&state.audit.posture.grade;
+  return h('aside',{class:'audit-ns-rail'},[
+    h('div',{class:'sidebar-title'},['Namespace heatmap']),
+    h('div',{class:'audit-ns-rail-list'},[
+      h('div',{class:'audit-ns-rail-item'+(state.auditNsScope==='ALL'?' active':''),onClick:()=>{ state.auditNsScope='ALL'; render(); }},[
+        h('span',{},['All namespaces']),
+        h('span',{class:'audit-ns-rail-meta'},[
+          clusterGrade?h('span',{class:'posture-ns-grade'},[clusterGrade]):null,
+          h('span',{class:'audit-ns-rail-count'},[String(totalResources)])
+        ])
+      ]),
+      ...index.map(([ns,stats])=>{
+        const np=nsPostures[ns];
+        return h('div',{class:'audit-ns-rail-item'+(state.auditNsScope===ns?' active':''),onClick:()=>{ state.auditNsScope=ns; state.auditExpandedNS[ns]=true; render(); }},[
+          h('span',{},[ns]),
+          h('span',{class:'audit-ns-rail-meta'},[
+            np?h('span',{class:'posture-ns-grade grade-'+((np.grade||'').toLowerCase())},[np.grade||'—']):null,
+            h('span',{class:'audit-ns-rail-count'},[String(stats.resources)])
+          ])
+        ]);
+      })
+    ]),
+    h('div',{class:'audit-ns-rail-foot'},[
+      h('span',{class:'sig sig-DANG'},['FIX ',h('strong',{},[String(totalDanger)])]),
+      h('span',{class:'sig sig-SUSP'},['NOTE ',h('strong',{},[String(totalWarning)])])
+    ])
+  ]);
+}
 
-  window._canvasInner=inner;
-  setTimeout(()=>applyTransform(),0);
+function openAuditSettings(){
+  const s=state.auditSettings||{ignoredNamespaces:[],disabledChecks:[]};
+  state.auditSettingsDraft={ignoredNamespaces:[...(s.ignoredNamespaces||[])],disabledChecks:[...(s.disabledChecks||[])],newNs:''};
+  state.auditShowSettings=true;
+  render();
+}
 
-  // Canvas cockpit layout (full height, no scroll)
-  const cockpit=document.createElement('div'); cockpit.className='canvas-cockpit';
-  const hdr2=document.createElement('div'); hdr2.className='canvas-header';
-  const br=document.createElement('div'); br.className='branding';
-  const t=document.createElement('h1'); t.textContent='kubectl-inventory // resource dependency canvas'; br.appendChild(t);
-  const mr=document.createElement('div'); mr.className='meta-row';
-  mr.innerHTML='<span>CTX: '+(inv.context||'—')+'</span><span>NS: '+(state.ns==='*'?'ALL':state.ns)+'</span><span>['+nodes.length+' NODES] ['+edges.length+' EDGES]</span>';
-  br.appendChild(mr);
-  const si=document.createElement('div'); si.className='status-ind';
-  const dot=document.createElement('div'); dot.className='dot'; si.appendChild(dot); si.appendChild(document.createTextNode('LIVE INTELLIGENCE STREAMING'));
-  hdr2.appendChild(br); hdr2.appendChild(si);
-  cockpit.appendChild(hdr2); cockpit.appendChild(wrap);
+function renderAuditSettingsModal(){
+  if(!state.auditShowSettings) return null;
+  const draft=state.auditSettingsDraft||{ignoredNamespaces:[],disabledChecks:[],newNs:''};
+  const checks=state.audit&&state.audit.checks?Object.values(state.audit.checks).sort((a,b)=>(a.title||'').localeCompare(b.title||'')):[];
+  return h('div',{class:'overlay',onClick:()=>{ state.auditShowSettings=false; render(); }},[
+    h('div',{class:'modal audit-settings-modal',onClick:(e)=>e.stopPropagation()},[
+      h('div',{class:'modal-hdr'},[
+        h('span',{class:'modal-title'},['Audit Settings']),
+        h('button',{class:'close-btn',onClick:()=>{ state.auditShowSettings=false; render(); }},['×'])
+      ]),
+      h('div',{class:'cfg-section'},[
+        h('label',{class:'cfg-label'},['Ignored Namespaces']),
+        h('p',{class:'audit-settings-help'},['Findings in these namespaces are hidden from all views.']),
+        h('div',{class:'audit-ns-list'},[
+          ...(draft.ignoredNamespaces||[]).map(ns=>h('div',{class:'audit-ns-item'},[
+            h('span',{},[ns]),
+            h('button',{class:'btn btn-sm',onClick:()=>{ draft.ignoredNamespaces=draft.ignoredNamespaces.filter(n=>n!==ns); render(); }},['Remove'])
+          ])),
+          (draft.ignoredNamespaces||[]).length===0?h('div',{class:'audit-settings-empty'},['No namespaces ignored.']):null
+        ]),
+        h('div',{class:'audit-ns-add'},[
+          h('input',{class:'text-input',type:'text',placeholder:'Add namespace or pattern (e.g. *-system)',value:draft.newNs||'',onInput:(e)=>{ draft.newNs=e.target.value; }}),
+          h('button',{class:'btn btn-primary',onClick:()=>{
+            const ns=(draft.newNs||'').trim();
+            if(!ns||draft.ignoredNamespaces.includes(ns)) return;
+            draft.ignoredNamespaces.push(ns); draft.newNs=''; render();
+          }},['Add'])
+        ])
+      ]),
+      h('div',{class:'cfg-section'},[
+        h('label',{class:'cfg-label'},['Enabled Checks']),
+        h('p',{class:'audit-settings-help'},['Uncheck to disable specific checks globally.']),
+        h('div',{class:'audit-check-list'},[
+          ...checks.map(c=>{
+            const enabled=!(draft.disabledChecks||[]).includes(c.id);
+            return h('label',{class:'audit-check-row'},[
+              h('input',{type:'checkbox',checked:enabled,onChange:()=>{
+                if(enabled) draft.disabledChecks=[...(draft.disabledChecks||[]),c.id];
+                else draft.disabledChecks=(draft.disabledChecks||[]).filter(x=>x!==c.id);
+                render();
+              }}),
+              h('span',{class:'audit-check-row-title'},[c.title]),
+              h('span',{class:'audit-check-row-desc'},[c.description])
+            ]);
+          })
+        ])
+      ]),
+      h('div',{class:'modal-actions'},[
+        h('button',{class:'btn',onClick:()=>{ state.auditShowSettings=false; render(); }},['Cancel']),
+        h('button',{class:'btn btn-primary',onClick:async()=>{
+          const payload={ignoredNamespaces:draft.ignoredNamespaces,disabledChecks:draft.disabledChecks};
+          try{
+            state.auditSettings=await apiPut('/api/settings/audit',payload);
+            state.auditShowSettings=false;
+            await loadAudit();
+          }catch(e){ console.error(e); }
+        }},['Save'])
+      ])
+    ])
+  ]);
+}
+
+function renderAudit(){
+  const inv=state.inv||{};
+  if(!state.audit && !state.auditError) return h('div',{class:'cockpit'},[renderLoading('RUNNING AUDIT CHECKS...')]);
+  if(state.auditError) return h('div',{class:'cockpit'},[
+    h('header',{class:'page-header'},[h('div',{class:'branding'},[h('h1',{class:'red'},['kubectl-inventory // audit']),h('div',{class:'meta-row'},[h('span',{},['CTX: '+(inv.context||'—')])])])]),
+    h('div',{class:'audit-empty',style:{color:'var(--red)'}},['// '+state.auditError])
+  ]);
+
+  const checks=(state.audit&&state.audit.checks)||{};
+  const allGroupsRaw=(state.audit&&state.audit.groups)||[];
+  const allGroups=allGroupsRaw.map(g=>({
+    ...g,
+    danger:(g.findings||[]).filter(f=>f.severity==='danger').length,
+    warning:(g.findings||[]).filter(f=>f.severity==='warning').length
+  }));
+  const groups=auditFilteredGroups();
+  const filteredFindings=groups.flatMap(g=>g.findings||[]);
+  const total=(state.audit.summary&&state.audit.summary.danger||0)+(state.audit.summary&&state.audit.summary.warning||0);
+  const ignored=(state.auditSettings&&state.auditSettings.ignoredNamespaces||[]).length;
+  const frameworks=auditFrameworksAvailable(checks);
+  const namespaced=auditGroupedByNamespace(groups);
+  const hasFilters=auditHasChipFilters()||(state.auditSearch||'').trim()||state.auditNsScope!=='ALL';
+
+  const toolbar=h('div',{class:'audit-toolbar'},[
+    h('div',{class:'audit-toolbar-row'},[
+      h('input',{class:'text-input audit-search',type:'text',placeholder:'Search rules, resources, namespaces... (press /)',value:state.auditSearch||'',onInput:(e)=>{ state.auditSearch=e.target.value; render(); }}),
+      hasFilters?h('button',{class:'btn btn-sm',onClick:()=>{ auditResetFilters(); render(); }},['Clear filters']):null
+    ]),
+    h('div',{class:'audit-filter-groups'},[
+      h('div',{class:'audit-filter-row'},[
+        h('span',{class:'audit-filter-label'},['Lens']),
+        renderAuditFilterChip('Show all',!auditHasChipFilters(),()=>{ state.auditLens={}; state.auditPriority={}; state.auditFramework={}; render(); }),
+        ...AUDIT_LENS_LABELS.map(([key,label])=>renderAuditFilterChip(label,!!state.auditLens[key],()=>auditToggleFilter('auditLens',key)))
+      ]),
+      h('div',{class:'audit-filter-row'},[
+        h('span',{class:'audit-filter-label'},['Priority']),
+        ...AUDIT_PRIORITY_LABELS.map(([key,label])=>renderAuditFilterChip(label,!!state.auditPriority[key],()=>auditToggleFilter('auditPriority',key),key==='mustfix'?'chip-danger':'chip-warn'))
+      ]),
+      frameworks.length?h('div',{class:'audit-filter-row'},[
+        h('span',{class:'audit-filter-label'},['Standards']),
+        ...frameworks.map(fw=>renderAuditFilterChip(fw,!!state.auditFramework[fw],()=>auditToggleFilter('auditFramework',fw)))
+      ]):null
+    ])
+  ]);
+
+  const nsPostures={};
+  (state.audit&&state.audit.namespacePostures||[]).forEach(np=>{ nsPostures[np.namespace]=np; });
+
+  const content=groups.length===0
+    ? h('div',{class:'audit-empty'},[total===0?'// POSTURE CLEAR — NO ACTION ITEMS IN SCOPE':(hasFilters?'// NO FINDINGS MATCH THE CURRENT SCOPE OR FILTERS':'// NO FINDINGS IN THIS VIEW')])
+    : h('div',{class:'audit-namespaced-list'},[...namespaced.map(([ns,nsGroups])=>renderAuditNamespaceSection(ns,nsGroups,checks,nsPostures[ns]))]);
+
+  const main=h('div',{class:'audit-main'},[
+    !hasFilters?renderActionQueue():null,
+    toolbar,
+    content,
+    h('div',{class:'audit-footer'},[
+      'Showing '+filteredFindings.length+' finding'+(filteredFindings.length!==1?'s':'')+' across '+groups.length+' resource'+(groups.length!==1?'s':'')+
+      (hasFilters?' (filtered)':'')
+    ])
+  ]);
+
+  const cockpit=h('div',{class:'cockpit'},[
+    h('header',{class:'page-header'},[
+      h('div',{class:'branding'},[
+        h('h1',{class:total>0?'red':''},['kubectl-inventory // posture']),
+        h('div',{class:'meta-row'},[
+          h('span',{},['CTX: '+(inv.context||'—')]),
+          h('span',{},['NS: '+(state.ns==='*'?'ALL':state.ns)]),
+          h('span',{},['MODE: INVENTORY_POSTURE'])
+        ]),
+        h('div',{class:'audit-subtitle'},['Posture Index blends best-practice checks with inventory-native signals — dangling owners, stuck deletes, GitOps drift — ranked into an action queue.'])
+      ]),
+      h('div',{class:'audit-header-actions'},[
+        h('button',{class:'btn btn-sm btn-primary',onClick:exportAuditPDF,title:'Download posture PDF'},['Export PDF']),
+        ignored>0?h('button',{class:'btn btn-sm',onClick:openAuditSettings},[ignored+' NS HIDDEN']):null,
+        h('button',{class:'btn btn-sm',onClick:openAuditSettings,title:'Audit settings'},['⚙ Settings']),
+        h('div',{class:'status-ind '+(total>0?'red':'')},[h('div',{class:'dot '+(total>0?'red':'')},[]),total>0?'ACTION ITEMS: '+total:'POSTURE CLEAR'])
+      ])
+    ]),
+    !hasFilters?renderPostureBanner():null,
+    renderAuditSummary(filteredFindings),
+    h('div',{class:'audit-workspace'},[
+      renderAuditNamespaceRail(allGroups),
+      main
+    ])
+  ]);
+
+  const modal=renderAuditSettingsModal();
+  if(modal){
+    const wrap=document.createElement('div');
+    wrap.appendChild(cockpit);
+    wrap.appendChild(modal);
+    return wrap;
+  }
   return cockpit;
 }
 
-function renderCanvasPanel(wrap,nodes,edges){
-  // Remove old panel
-  const old=wrap.querySelector('.explain-panel'); if(old)old.remove();
-  const n=state.selectedCanvasNode; if(!n)return;
-
-  // Count incoming refs (edges pointing TO this node)
-  const incoming=edges.filter(e=>e.to===n.id);
-
-  const panel=document.createElement('div'); panel.className='panel explain-panel';
-
-  // Header
-  const phdr=document.createElement('div'); phdr.className='panel-header';
-  const psm=document.createElement('div'); psm.className='panel-title-sm'; psm.textContent='SELECTED RESOURCE'; phdr.appendChild(psm);
-  const plg=document.createElement('div'); plg.className='panel-title-lg'; plg.textContent=n.kind+' // '+n.name; phdr.appendChild(plg);
-  panel.appendChild(phdr);
-
-  // KV details
-  const kv=document.createElement('div'); kv.className='kv-list';
-  [{k:'Namespace',v:n.namespace||'—'},{k:'Age',v:n.age},{k:'Status',v:n.signal,cls:(n.signal==='CLEAN'||n.signal==='REF')?'ok':''}].forEach(({k,v,cls})=>{
-    const row=document.createElement('div'); row.className='kv-row';
-    const key=document.createElement('span'); key.className='kv-key'; key.textContent=k;
-    const val=document.createElement('span'); val.className='kv-val'+(cls?' '+cls:''); val.textContent=v;
-    row.appendChild(key); row.appendChild(val); kv.appendChild(row);
-  });
-  panel.appendChild(kv);
-
-  // Incoming refs
-  if(incoming.length){
-    const rt=document.createElement('div'); rt.className='panel-title-sm'; rt.style.marginTop='4px'; rt.textContent='INCOMING REFERENCES ('+incoming.length+')'; panel.appendChild(rt);
-    const rl=document.createElement('div'); rl.className='ref-list';
-    incoming.slice(0,4).forEach(e=>{
-      const src=nodes.find(x=>x.id===e.from);
-      const ri=document.createElement('div'); ri.className='ref-item';
-      const chip=document.createElement('div'); chip.className='chip chip-ref'; chip.textContent='SPEC';
-      const lbl=document.createElement('span'); lbl.style.fontSize='.72rem'; lbl.textContent=(src?src.kind+'/'+src.name:'—');
-      ri.appendChild(chip); ri.appendChild(lbl); rl.appendChild(ri);
-    });
-    panel.appendChild(rl);
+document.addEventListener('keydown',(e)=>{
+  if(e.key==='/'&&!e.ctrlKey&&!e.metaKey&&state.screen==='audit'&&document.activeElement&&document.activeElement.tagName!=='INPUT'){
+    e.preventDefault();
+    const el=document.querySelector('.audit-search');
+    if(el) el.focus();
   }
-
-  // Actions
-  const acts=document.createElement('div'); acts.className='panel-actions';
-
-  // Copy kubectl command to clipboard
-  const copyBtn=document.createElement('button'); copyBtn.className='panel-btn'; copyBtn.textContent='COPY KUBECTL COMMAND';
-  copyBtn.addEventListener('click',()=>{
-    const ns=n.namespace?'-n '+n.namespace:'';
-    const cmd='kubectl get '+n.kind.toLowerCase()+' '+n.name+' '+ns+' -o yaml';
-    navigator.clipboard.writeText(cmd).then(()=>{
-      copyBtn.textContent='COPIED!';
-      copyBtn.style.borderColor='var(--green)'; copyBtn.style.color='var(--green)';
-      setTimeout(()=>{ copyBtn.textContent='COPY KUBECTL COMMAND'; copyBtn.style.borderColor=''; copyBtn.style.color=''; },2000);
-    }).catch(()=>{
-      copyBtn.textContent='COPY FAILED'; setTimeout(()=>{ copyBtn.textContent='COPY KUBECTL COMMAND'; },2000);
-    });
-  });
-  acts.appendChild(copyBtn);
-
-  // Drill into kind
-  const drillBtn=document.createElement('button'); drillBtn.className='panel-btn primary'; drillBtn.textContent='DRILL INTO KIND';
-  drillBtn.addEventListener('click',()=>openDrill('',n.kind));
-  acts.appendChild(drillBtn);
-
-  panel.appendChild(acts);
-
-  wrap.appendChild(panel);
-}
-
-function applyTransform(){
-  if(window._canvasInner) window._canvasInner.style.transform='translate('+state.panX+'px,'+state.panY+'px) scale('+state.scale+')';
-}
-
-
+});
 
 function render(){
   const app=document.getElementById('app');
   app.innerHTML='';
   app.appendChild(renderNav());
   try{
-    const screens={connect:renderConnect,radar:renderRadar,drill:renderDrill,namespaces:renderNamespaces,health:renderHealth,canvas:renderCanvas};
+    const screens={connect:renderConnect,radar:renderRadar,audit:renderAudit,drill:renderDrill,namespaces:renderNamespaces,health:renderHealth};
     app.appendChild((screens[state.screen]||renderConnect)());
   }catch(e){ console.error('render error:',e); app.appendChild(h('div',{class:'loading'},[h('div',{class:'loading-text',style:{color:'var(--red)'}},['RENDER ERROR']),h('div',{class:'loading-sub'},[e.message])])); }
 }
